@@ -2198,7 +2198,18 @@ class DiscordAdapter(BasePlatformAdapter):
         # Register skills under a single /skill command group with category
         # subcommand groups.  This uses 1 top-level slot instead of N,
         # supporting up to 25 categories × 25 skills = 625 skills.
-        self._register_skill_group(tree)
+        # Gated behind HERMES_DISCORD_REGISTER_SKILL_SLASH_COMMANDS so operators
+        # can disable skill slash commands if desired (defaults to enabled).
+        _register_skill_slash_raw = os.getenv("HERMES_DISCORD_REGISTER_SKILL_SLASH_COMMANDS", "true")
+        _register_skill_slash = _register_skill_slash_raw.strip().lower() not in {"0", "false", "no", "off"}
+        if _register_skill_slash:
+            self._register_skill_group(tree)
+        else:
+            logger.info(
+                "[%s] Native Discord skill slash commands disabled via "
+                "HERMES_DISCORD_REGISTER_SKILL_SLASH_COMMANDS",
+                self.name,
+            )
 
     def _register_skill_group(self, tree) -> None:
         """Register a single ``/skill`` command with autocomplete on the name.
