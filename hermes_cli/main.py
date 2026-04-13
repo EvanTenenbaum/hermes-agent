@@ -4431,10 +4431,8 @@ def cmd_dashboard(args):
         print("Install them with:  pip install hermes-agent[web]")
         sys.exit(1)
 
-    web_dist = PROJECT_ROOT / "hermes_cli" / "web_dist"
-    if not web_dist.exists():
-        if not _build_web_ui(PROJECT_ROOT / "web", fatal=True):
-            sys.exit(1)
+    if not _build_web_ui(PROJECT_ROOT / "web", fatal=True):
+        sys.exit(1)
 
     from hermes_cli.web_server import start_server
     start_server(

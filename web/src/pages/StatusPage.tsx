@@ -6,7 +6,6 @@ import {
   Cpu,
   Database,
   Radio,
-  Shield,
   Wifi,
   WifiOff,
 } from "lucide-react";
@@ -65,7 +64,6 @@ export default function StatusPage() {
     );
   }
 
-  const configNeedsMigration = status.config_version < status.latest_config_version;
   const gwBadge = gatewayBadge(status);
 
   const items = [
@@ -77,13 +75,6 @@ export default function StatusPage() {
       badgeVariant: "success" as const,
     },
     {
-      icon: Activity,
-      label: "Active Sessions",
-      value: status.active_sessions > 0 ? `${status.active_sessions} running` : "None",
-      badgeText: status.active_sessions > 0 ? "Live" : "Off",
-      badgeVariant: (status.active_sessions > 0 ? "success" : "outline") as "success" | "outline",
-    },
-    {
       icon: Radio,
       label: "Gateway",
       value: gatewayValue(status),
@@ -91,11 +82,11 @@ export default function StatusPage() {
       badgeVariant: gwBadge.badge,
     },
     {
-      icon: Shield,
-      label: "Config Version",
-      value: `v${status.config_version}`,
-      badgeText: configNeedsMigration ? "Migrate" : "Current",
-      badgeVariant: (configNeedsMigration ? "warning" : "success") as "warning" | "success",
+      icon: Activity,
+      label: "Active Sessions",
+      value: status.active_sessions > 0 ? `${status.active_sessions} running` : "None",
+      badgeText: status.active_sessions > 0 ? "Live" : "Off",
+      badgeVariant: (status.active_sessions > 0 ? "success" : "outline") as "success" | "outline",
     },
   ];
 
@@ -118,9 +109,7 @@ export default function StatusPage() {
       detail: info.error_message ?? undefined,
     });
   }
-  if (configNeedsMigration) {
-    alerts.push({ message: `Config v${status.config_version} is outdated — v${status.latest_config_version} available` });
-  }
+
 
   return (
     <div className="flex flex-col gap-6">
@@ -143,7 +132,7 @@ export default function StatusPage() {
         </div>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-3">
         {items.map(({ icon: Icon, label, value, badgeText, badgeVariant }) => (
           <Card key={label}>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -154,12 +143,14 @@ export default function StatusPage() {
             <CardContent>
               <div className="text-2xl font-bold font-display">{value}</div>
 
-              <Badge variant={badgeVariant} className="mt-2">
-                {badgeVariant === "success" && (
-                  <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
-                )}
-                {badgeText}
-              </Badge>
+              {badgeText && (
+                <Badge variant={badgeVariant} className="mt-2">
+                  {badgeVariant === "success" && (
+                    <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+                  )}
+                  {badgeText}
+                </Badge>
+              )}
             </CardContent>
           </Card>
         ))}
