@@ -279,6 +279,41 @@ _OFFICIAL_DOCS_PRICING: Dict[tuple[str, str], PricingEntry] = {
         source_url="https://api-docs.deepseek.com/quick_start/pricing",
         pricing_version="deepseek-pricing-2026-03-16",
     ),
+    # OpenAI via custom openai-api provider (billing_route resolves as "custom" → unknown,
+    # so add entries under both "openai" and "custom" for the common models)
+    (
+        "custom",
+        "gpt-4o",
+    ): PricingEntry(
+        input_cost_per_million=Decimal("2.50"),
+        output_cost_per_million=Decimal("10.00"),
+        cache_read_cost_per_million=Decimal("1.25"),
+        source="official_docs_snapshot",
+        source_url="https://openai.com/api/pricing/",
+        pricing_version="openai-pricing-2026-03-16",
+    ),
+    (
+        "custom",
+        "gpt-4o-mini",
+    ): PricingEntry(
+        input_cost_per_million=Decimal("0.15"),
+        output_cost_per_million=Decimal("0.60"),
+        cache_read_cost_per_million=Decimal("0.075"),
+        source="official_docs_snapshot",
+        source_url="https://openai.com/api/pricing/",
+        pricing_version="openai-pricing-2026-03-16",
+    ),
+    (
+        "custom",
+        "o4-mini",
+    ): PricingEntry(
+        input_cost_per_million=Decimal("1.10"),
+        output_cost_per_million=Decimal("4.40"),
+        cache_read_cost_per_million=Decimal("0.275"),
+        source="official_docs_snapshot",
+        source_url="https://openai.com/api/pricing/",
+        pricing_version="openai-pricing-2026-04-16",
+    ),
     # Google Gemini
     (
         "google",
