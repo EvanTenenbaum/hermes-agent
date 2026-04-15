@@ -1340,7 +1340,7 @@ class GatewayRunner:
         except Exception:
             pass
         result = parse_reasoning_effort(effort)
-        if effort and effort.strip() and result is None:
+        if effort and effort.strip() and result is None and effort.strip().lower() != "auto":
             logger.warning("Unknown reasoning_effort '%s', using default (medium)", effort)
         return result
 
@@ -10550,7 +10550,7 @@ class GatewayRunner:
                                 metadata=_status_thread_metadata,
                             )
                         except Exception as e:
-                            logger.warning("Failed to send first response before queued message: %s", e)
+                            logger.warning("Failed to send first response before queued message: %s", e, exc_info=True)
                     elif first_response:
                         logger.info(
                             "Queued follow-up for session %s: skipping resend because final streamed delivery was confirmed.",

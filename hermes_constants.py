@@ -154,6 +154,9 @@ def parse_reasoning_effort(effort: str) -> dict | None:
     effort = effort.strip().lower()
     if effort == "none":
         return {"enabled": False}
+    if effort == "auto":
+        # "auto" means let the model/provider decide — return None to use defaults
+        return None
     if effort in VALID_REASONING_EFFORTS:
         return {"enabled": True, "effort": effort}
     return None
