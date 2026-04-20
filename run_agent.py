@@ -997,6 +997,12 @@ class AIAgent:
             self._anthropic_prompt_cache_policy()
         )
         self._cache_ttl = "5m"  # Default 5-minute TTL (1.25x write cost)
+        self._disable_streaming = self._should_disable_streaming_for_runtime(
+            provider=self.provider,
+            base_url=self.base_url,
+            model=self.model,
+            api_mode=self.api_mode,
+        )
         
         # Iteration budget: the LLM is only notified when it actually exhausts
         # the iteration budget (api_call_count >= max_iterations).  At that
@@ -1803,9 +1809,11 @@ class AIAgent:
             "base_url": self.base_url,
             "api_mode": self.api_mode,
             "api_key": getattr(self, "api_key", ""),
+            "credential_pool": self._credential_pool,
             "client_kwargs": dict(self._client_kwargs),
             "use_prompt_caching": self._use_prompt_caching,
             "use_native_cache_layout": self._use_native_cache_layout,
+            "disable_streaming": self._disable_streaming,
             # Context engine state that _try_activate_fallback() overwrites.
             # Use getattr for model/base_url/api_key/provider since plugin
             # engines may not have these (they're ContextCompressor-specific).
@@ -1944,6 +1952,18 @@ class AIAgent:
                 shared=True,
             )
 
+        try:
+            from hermes_cli.runtime_provider import resolve_runtime_provider
+
+            switch_runtime = resolve_runtime_provider(
+                requested=new_provider,
+                explicit_api_key=api_key or None,
+                explicit_base_url=base_url or None,
+            )
+            self._credential_pool = switch_runtime.get("credential_pool")
+        except Exception:
+            self._credential_pool = None
+
         # ── Re-evaluate prompt caching ──
         self._use_prompt_caching, self._use_native_cache_layout = (
             self._anthropic_prompt_cache_policy(
@@ -1952,6 +1972,12 @@ class AIAgent:
                 api_mode=api_mode,
                 model=new_model,
             )
+        )
+        self._disable_streaming = self._should_disable_streaming_for_runtime(
+            provider=new_provider,
+            base_url=self.base_url,
+            model=new_model,
+            api_mode=api_mode,
         )
 
         # ── Update context compressor ──
@@ -1984,9 +2010,11 @@ class AIAgent:
             "base_url": self.base_url,
             "api_mode": self.api_mode,
             "api_key": getattr(self, "api_key", ""),
+            "credential_pool": self._credential_pool,
             "client_kwargs": dict(self._client_kwargs),
             "use_prompt_caching": self._use_prompt_caching,
             "use_native_cache_layout": self._use_native_cache_layout,
+            "disable_streaming": self._disable_streaming,
             "compressor_model": getattr(_cc, "model", self.model) if _cc else self.model,
             "compressor_base_url": getattr(_cc, "base_url", self.base_url) if _cc else self.base_url,
             "compressor_api_key": getattr(_cc, "api_key", "") if _cc else "",
@@ -5380,6 +5408,37 @@ class AIAgent:
             or getattr(self, "_stream_callback", None) is not None
         )
 
+    def _should_disable_streaming_for_runtime(
+        self,
+        *,
+        provider: str | None,
+        base_url: str | None,
+        model: str | None,
+        api_mode: str | None,
+    ) -> bool:
+        """Return True when a runtime should avoid the streaming code path."""
+        if api_mode == "anthropic_messages":
+            return False
+        base = (base_url or "").lower()
+        mdl = (model or "").lower()
+        prov = (provider or "").lower()
+        return ("openrouter" in base or prov == "openrouter") and "claude" in mdl
+
+    def _should_replay_reasoning_content(self) -> bool:
+        """Return True when assistant reasoning text should be echoed back.
+
+        OpenRouter Claude tool turns break when prior assistant reasoning is
+        replayed as `reasoning_content`, and OpenAI rejects those payloads too.
+        Preserve only the visible assistant content for these routes.
+        """
+        provider = (self.provider or "").lower()
+        base = (self.base_url or "").lower()
+        if provider in {"openrouter", "openai-api", "openai", "custom"}:
+            return False
+        if "openrouter" in base or "api.openai.com" in base:
+            return False
+        return True
+
     def _interruptible_streaming_api_call(
         self, api_kwargs: dict, *, on_first_delta: callable = None
     ):
@@ -6117,6 +6176,7 @@ class AIAgent:
         # access for Codex providers.
         try:
             from agent.auxiliary_client import resolve_provider_client
+            from hermes_cli.runtime_provider import resolve_runtime_provider
             # Pass base_url and api_key from fallback config so custom
             # endpoints (e.g. Ollama Cloud) resolve correctly instead of
             # falling through to OpenRouter defaults.
@@ -6130,6 +6190,11 @@ class AIAgent:
                 fb_provider, model=fb_model, raw_codex=True,
                 explicit_base_url=fb_base_url_hint,
                 explicit_api_key=fb_api_key_hint)
+            fb_runtime = resolve_runtime_provider(
+                requested=fb_provider,
+                explicit_api_key=fb_api_key_hint,
+                explicit_base_url=fb_base_url_hint,
+            )
             if fb_client is None:
                 logging.warning(
                     "Fallback to %s failed: provider not configured",
@@ -6170,6 +6235,7 @@ class AIAgent:
             self.provider = fb_provider
             self.base_url = fb_base_url
             self.api_mode = fb_api_mode
+            self._credential_pool = fb_runtime.get("credential_pool") if isinstance(fb_runtime, dict) else None
             self._fallback_activated = True
 
             # Honor per-provider / per-model request_timeout_seconds for the
@@ -6225,6 +6291,12 @@ class AIAgent:
                     api_mode=fb_api_mode,
                     model=fb_model,
                 )
+            )
+            self._disable_streaming = self._should_disable_streaming_for_runtime(
+                provider=fb_provider,
+                base_url=fb_base_url,
+                model=fb_model,
+                api_mode=fb_api_mode,
             )
 
             # Update context compressor limits for the fallback model.
@@ -6282,6 +6354,7 @@ class AIAgent:
             self.base_url = rt["base_url"]           # setter updates _base_url_lower
             self.api_mode = rt["api_mode"]
             self.api_key = rt["api_key"]
+            self._credential_pool = rt.get("credential_pool")
             self._client_kwargs = dict(rt["client_kwargs"])
             self._use_prompt_caching = rt["use_prompt_caching"]
             # Default to native layout when the restored snapshot predates the
@@ -6289,6 +6362,15 @@ class AIAgent:
             self._use_native_cache_layout = rt.get(
                 "use_native_cache_layout",
                 self.api_mode == "anthropic_messages" and self.provider == "anthropic",
+            )
+            self._disable_streaming = rt.get(
+                "disable_streaming",
+                self._should_disable_streaming_for_runtime(
+                    provider=rt["provider"],
+                    base_url=rt["base_url"],
+                    model=rt["model"],
+                    api_mode=rt["api_mode"],
+                ),
             )
 
             # ── Rebuild client for the primary provider ──
@@ -6363,9 +6445,8 @@ class AIAgent:
         if error_type not in self._TRANSIENT_TRANSPORT_ERRORS:
             return False
 
-        # Skip for aggregator providers — they manage their own retry infra
-        if self._is_openrouter_url():
-            return False
+        # Nous still uses short-lived minted credentials, so rebuilding the
+        # raw client here is not sufficient and can interfere with auth refresh.
         provider_lower = (self.provider or "").strip().lower()
         if provider_lower in ("nous", "nous-research"):
             return False
@@ -6793,7 +6874,12 @@ class AIAgent:
         for msg in api_messages:
             if not isinstance(msg, dict):
                 continue
-            if "codex_reasoning_items" in msg:
+            if (
+                "codex_reasoning_items" in msg
+                or "reasoning" in msg
+                or "reasoning_details" in msg
+                or "finish_reason" in msg
+            ):
                 needs_sanitization = True
                 break
 
@@ -6814,8 +6900,12 @@ class AIAgent:
                 if not isinstance(msg, dict):
                     continue
 
-                # Codex-only replay state must not leak into strict chat-completions APIs.
+                # Internal-only agent metadata must not leak into strict
+                # chat-completions APIs on OpenRouter/direct providers.
                 msg.pop("codex_reasoning_items", None)
+                msg.pop("reasoning", None)
+                msg.pop("reasoning_details", None)
+                msg.pop("finish_reason", None)
 
                 tool_calls = msg.get("tool_calls")
                 if isinstance(tool_calls, list):
@@ -7291,7 +7381,7 @@ class AIAgent:
                 api_msg = msg.copy()
                 if msg.get("role") == "assistant":
                     reasoning = msg.get("reasoning")
-                    if reasoning:
+                    if reasoning and self._should_replay_reasoning_content():
                         api_msg["reasoning_content"] = reasoning
                 api_msg.pop("reasoning", None)
                 api_msg.pop("finish_reason", None)
@@ -9034,12 +9124,13 @@ class AIAgent:
                         if isinstance(_base, str):
                             api_msg["content"] = _base + "\n\n" + "\n\n".join(_injections)
 
-                # For ALL assistant messages, pass reasoning back to the API
-                # This ensures multi-turn reasoning context is preserved
+                # For providers that need it, pass reasoning back to the API
+                # so multi-turn reasoning context is preserved without
+                # poisoning stricter OpenAI-compatible routes.
                 if msg.get("role") == "assistant":
                     reasoning_text = msg.get("reasoning")
-                    if reasoning_text:
-                        # Add reasoning_content for API compatibility (Moonshot AI, Novita, OpenRouter)
+                    if reasoning_text and self._should_replay_reasoning_content():
+                        # Add reasoning_content for providers that expect it.
                         api_msg["reasoning_content"] = reasoning_text
 
                 # Remove 'reasoning' field - it's for trajectory storage only
