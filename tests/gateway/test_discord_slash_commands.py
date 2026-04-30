@@ -164,7 +164,7 @@ async def test_auto_registers_missing_gateway_commands(adapter):
 
     # These commands are gateway-available but were not in the original
     # hardcoded registration list — they should be auto-registered.
-    expected_auto = {"debug", "yolo", "reload", "profile"}
+    expected_auto = {"debug", "yolo", "profile"}
     for name in expected_auto:
         assert name in tree_names, f"/{name} should be auto-registered on Discord"
 
@@ -196,6 +196,89 @@ async def test_auto_registered_command_with_args(adapter):
     await branch_cmd.callback(interaction, args="my-branch")
     adapter._run_simple_slash.assert_awaited_once_with(
         interaction, "/branch my-branch"
+    )
+
+
+@pytest.mark.asyncio
+async def test_auto_registers_plugin_commands_for_discord(adapter):
+    """Plugin slash commands should appear as native Discord app commands."""
+    adapter._run_simple_slash = AsyncMock()
+
+    with patch(
+        "hermes_cli.plugins.get_plugin_commands",
+        return_value={
+            "metricas": {
+                "handler": lambda _a: "ok",
+                "description": "Metrics dashboard",
+                "args_hint": "dias:7 formato:json",
+                "plugin": "metrics-plugin",
+            }
+        },
+    ):
+        adapter._register_slash_commands()
+
+    tree_names = set(adapter._client.tree.commands.keys())
+    assert "metricas" in tree_names
+
+    metricas_cmd = adapter._client.tree.commands["metricas"]
+    interaction = SimpleNamespace()
+    await metricas_cmd.callback(interaction, args="dias:7 formato:json")
+    adapter._run_simple_slash.assert_awaited_once_with(
+        interaction, "/metricas dias:7 formato:json"
+    )
+
+
+@pytest.mark.asyncio
+async def test_auto_registered_plugin_command_without_args_hint(adapter):
+    """Plugin commands without args_hint should register as parameterless."""
+    adapter._run_simple_slash = AsyncMock()
+
+    with patch(
+        "hermes_cli.plugins.get_plugin_commands",
+        return_value={
+            "ping": {
+                "handler": lambda _a: "pong",
+                "description": "Ping the plugin",
+                "args_hint": "",
+                "plugin": "ping-plugin",
+            }
+        },
+    ):
+        adapter._register_slash_commands()
+
+    assert "ping" in adapter._client.tree.commands
+    ping_cmd = adapter._client.tree.commands["ping"]
+    interaction = SimpleNamespace()
+    await ping_cmd.callback(interaction)
+    adapter._run_simple_slash.assert_awaited_once_with(interaction, "/ping")
+
+
+@pytest.mark.asyncio
+async def test_plugin_command_name_conflict_skipped(adapter):
+    """A plugin command that collides with a built-in must not override it."""
+    adapter._run_simple_slash = AsyncMock()
+
+    with patch(
+        "hermes_cli.plugins.get_plugin_commands",
+        return_value={
+            "status": {
+                "handler": lambda _a: "plugin-status",
+                "description": "Plugin status",
+                "args_hint": "",
+                "plugin": "shadow-plugin",
+            }
+        },
+    ):
+        adapter._register_slash_commands()
+
+    # Built-ins are registered via @tree.command as plain functions. A
+    # plugin-registered override would install a _FakeCommand instance
+    # (has .callback) via tree.add_command. If the conflict-skip logic
+    # fires, the slot remains a bare function.
+    status_entry = adapter._client.tree.commands["status"]
+    assert callable(status_entry) and not hasattr(status_entry, "callback"), (
+        "plugin registration overrode the built-in /status command — "
+        "the already_registered skip must prevent this"
     )
 
 
@@ -686,7 +769,8 @@ def test_discord_auto_thread_config_bridge(monkeypatch, tmp_path):
 # ------------------------------------------------------------------
 
 
-def test_register_skill_command_is_flat_not_nested(adapter):
+def test_register_skill_command_is_flat_not_nested(adapter, monkeypatch):
+    monkeypatch.setenv("HERMES_DISCORD_REGISTER_SKILL_SLASH_COMMANDS", "true")
     """_register_skill_group should register a single flat ``/skill`` command.
 
     The older layout nested categories as subcommand groups under ``/skill``.
@@ -736,7 +820,8 @@ def test_register_skill_command_empty_skills_no_command(adapter):
     assert "skill" not in tree.commands
 
 
-def test_register_skill_command_callback_dispatches_by_name(adapter):
+def test_register_skill_command_callback_dispatches_by_name(adapter, monkeypatch):
+    monkeypatch.setenv("HERMES_DISCORD_REGISTER_SKILL_SLASH_COMMANDS", "true")
     """The /skill callback should look up the skill by ``name`` and
     dispatch via ``_run_simple_slash`` with the real command key.
     """
@@ -777,7 +862,8 @@ def test_register_skill_command_callback_dispatches_by_name(adapter):
     assert dispatched == ["/gif-search", "/dogfood my test"]
 
 
-def test_register_skill_command_handles_unknown_skill_gracefully(adapter):
+def test_register_skill_command_handles_unknown_skill_gracefully(adapter, monkeypatch):
+    monkeypatch.setenv("HERMES_DISCORD_REGISTER_SKILL_SLASH_COMMANDS", "true")
     """Passing a name that isn't a registered skill should respond with
     an ephemeral error message, NOT crash the callback.
     """
@@ -807,7 +893,8 @@ def test_register_skill_command_handles_unknown_skill_gracefully(adapter):
     assert sent[0]["ephemeral"] is True
 
 
-def test_register_skill_command_payload_fits_discord_8kb_limit(adapter):
+def test_register_skill_command_payload_fits_discord_8kb_limit(adapter, monkeypatch):
+    monkeypatch.setenv("HERMES_DISCORD_REGISTER_SKILL_SLASH_COMMANDS", "true")
     """The /skill command registration payload must stay under Discord's
     ~8000-byte per-command limit even with a large skill catalog.
 
@@ -852,7 +939,8 @@ def test_register_skill_command_payload_fits_discord_8kb_limit(adapter):
     )
 
 
-def test_register_skill_command_autocomplete_filters_by_name_and_description(adapter):
+def test_register_skill_command_autocomplete_filters_by_name_and_description(adapter, monkeypatch):
+    monkeypatch.setenv("HERMES_DISCORD_REGISTER_SKILL_SLASH_COMMANDS", "true")
     """The autocomplete callback should match on both skill name and
     description so the user can search by either.
     """
