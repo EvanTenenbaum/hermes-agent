@@ -8516,11 +8516,24 @@ class AIAgent:
                 fb_provider, model=fb_model, raw_codex=True,
                 explicit_base_url=fb_base_url_hint,
                 explicit_api_key=fb_api_key_hint)
-            fb_runtime = resolve_runtime_provider(
-                requested=fb_provider,
-                explicit_api_key=fb_api_key_hint,
-                explicit_base_url=fb_base_url_hint,
-            )
+            try:
+                fb_runtime = resolve_runtime_provider(
+                    requested=fb_provider,
+                    explicit_api_key=fb_api_key_hint,
+                    explicit_base_url=fb_base_url_hint,
+                )
+            except Exception as runtime_exc:
+                # The provider client resolver is the source of truth for
+                # fallback activation.  Runtime metadata is optional here:
+                # tests may patch resolve_provider_client, and legacy configs
+                # may use aliases that runtime_provider does not recognize yet.
+                logging.debug(
+                    "Fallback runtime metadata unavailable for %s/%s: %s",
+                    fb_provider,
+                    fb_model,
+                    runtime_exc,
+                )
+                fb_runtime = {}
             if fb_client is None:
                 logging.warning(
                     "Fallback to %s failed: provider not configured",

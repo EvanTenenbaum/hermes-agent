@@ -433,6 +433,7 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
     term.loadAddon(new WebLinksAddon());
 
     term.open(host);
+    term.write("\r\n\x1b[90m[starting Hermes chat...]\x1b[0m\r\n");
 
     // WebGL draws from a texture atlas sized with device pixels. On phones and
     // in DevTools device mode that often produces *visually* much larger cells
@@ -510,7 +511,8 @@ export default function ChatPage({ isActive = true }: { isActive?: boolean }) {
         }
       }
       if (
-        fontChanged &&
+        term.cols > 0 &&
+        term.rows > 0 &&
         wsRef.current &&
         wsRef.current.readyState === WebSocket.OPEN
       ) {

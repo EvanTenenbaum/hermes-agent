@@ -6490,13 +6490,18 @@ class GatewayRunner:
                     exec_cmd = qcmd.get("command", "")
                     if exec_cmd:
                         try:
+                            import shlex
+                            user_args = event.get_command_args().strip()
+                            exec_with_args = exec_cmd
+                            if user_args:
+                                exec_with_args = exec_cmd + " " + " ".join(shlex.quote(part) for part in shlex.split(user_args))
                             # Sanitize env to prevent credential leakage —
                             # quick commands run in the gateway process which
                             # has all API keys in os.environ.
                             from tools.environments.local import _sanitize_subprocess_env
                             sanitized_env = _sanitize_subprocess_env(os.environ.copy())
                             proc = await asyncio.create_subprocess_shell(
-                                exec_cmd,
+                                exec_with_args,
                                 stdout=asyncio.subprocess.PIPE,
                                 stderr=asyncio.subprocess.PIPE,
                                 env=sanitized_env,
