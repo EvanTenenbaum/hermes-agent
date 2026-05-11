@@ -2070,10 +2070,37 @@ class SlackAdapter(BasePlatformAdapter):
                         _, ext = os.path.splitext(original_filename)
                         ext = ext.lower()
 
-                    # Fallback: reverse-lookup from MIME type
+                    # Fallback 1: reverse-lookup from MIME type.
+                    # Build the map carefully so that when multiple extensions
+                    # share the same MIME type (e.g. .txt and .log both map to
+                    # text/plain), the "more canonical" extension wins.
+                    # We give .txt priority over .log for text/plain here by
+                    # inserting .txt last (it will overwrite .log in the map).
                     if not ext and mimetype:
-                        mime_to_ext = {v: k for k, v in SUPPORTED_DOCUMENT_TYPES.items()}
+                        _preferred_order = [".log", ".txt"]  # last wins → .txt
+                        mime_to_ext = {v: k for k, v in SUPPORTED_DOCUMENT_TYPES.items()
+                                       if k not in _preferred_order}
+                        for _pext in _preferred_order:
+                            if _pext in SUPPORTED_DOCUMENT_TYPES:
+                                mime_to_ext[SUPPORTED_DOCUMENT_TYPES[_pext]] = _pext
                         ext = mime_to_ext.get(mimetype, "")
+
+                    # Fallback 2: Slack-specific filetype field.
+                    # Slack text snippets report filetype="text" with no file
+                    # extension in the name.  Map the most common Slack
+                    # filetype values to safe extensions.
+                    if not ext:
+                        slack_filetype = f.get("filetype", "")
+                        _slack_filetype_map = {
+                            "text": ".txt",
+                            "markdown": ".md",
+                            "python": ".txt",
+                            "javascript": ".txt",
+                            "json": ".txt",
+                            "csv": ".txt",
+                            "log": ".log",
+                        }
+                        ext = _slack_filetype_map.get(slack_filetype, "")
 
                     if ext not in SUPPORTED_DOCUMENT_TYPES:
                         continue  # Skip unsupported file types silently
@@ -2087,25 +2114,27 @@ class SlackAdapter(BasePlatformAdapter):
 
                     # Download and cache
                     raw_bytes = await self._download_slack_file_bytes(url, team_id=team_id)
+                    # When the original filename has no extension (e.g. Slack
+                    # text snippets named "Untitled"), append the resolved ext
+                    # so the cached file has the correct extension.
+                    cache_filename = original_filename or f"document{ext}"
+                    if original_filename and not os.path.splitext(original_filename)[1]:
+                        cache_filename = f"{original_filename}{ext}"
                     cached_path = cache_document_from_bytes(
-                        raw_bytes, original_filename or f"document{ext}"
+                        raw_bytes, cache_filename
                     )
                     doc_mime = SUPPORTED_DOCUMENT_TYPES[ext]
                     media_urls.append(cached_path)
                     media_types.append(doc_mime)
                     logger.debug("[Slack] Cached user document: %s", cached_path)
 
-                    # Inject small text-ish files directly into the prompt so
-                    # snippets like JSON/YAML/configs are actually visible to the agent.
+                    # Inject text content for plain-text files (capped at 100 KB)
                     MAX_TEXT_INJECT_BYTES = 100 * 1024
-                    TEXT_INJECT_EXTENSIONS = {
-                        ".md", ".txt", ".csv", ".log", ".json", ".xml",
-                        ".yaml", ".yml", ".toml", ".ini", ".cfg",
-                    }
-                    if ext in TEXT_INJECT_EXTENSIONS and len(raw_bytes) <= MAX_TEXT_INJECT_BYTES:
+                    if ext in (".md", ".txt", ".log") and len(raw_bytes) <= MAX_TEXT_INJECT_BYTES:
+
                         try:
                             text_content = raw_bytes.decode("utf-8")
-                            display_name = original_filename or f"document{ext}"
+                            display_name = cache_filename
                             display_name = re.sub(r'[^\w.\- ]', '_', display_name)
                             injection = f"[Content of {display_name}]:\n{text_content}"
                             if text:
@@ -2900,13 +2929,22 @@ class SlackAdapter(BasePlatformAdapter):
                         headers={"Authorization": f"Bearer {bot_token}"},
                     )
                     response.raise_for_status()
+
+                    # Slack redirects to an HTML sign-in/fallback page when the
+                    # bot token lacks the `files:read` scope or the file is
+                    # inaccessible.  Detect and reject this early so we don't
+                    # cache bogus HTML as document content.
+
                     ct = response.headers.get("content-type", "")
                     if "text/html" in ct:
                         raise ValueError(
                             "Slack returned HTML instead of file bytes "
                             f"(content-type: {ct}); "
-                            "check bot token scopes and file permissions"
+                            "bot token may be missing the 'files:read' scope "
+                            "or the file is not accessible to this bot"
                         )
+
+
                     return response.content
                 except (httpx.TimeoutException, httpx.HTTPStatusError, ValueError) as exc:
                     if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 429:

@@ -159,19 +159,25 @@ const MAX_RECENT_IDS = 50;
 
 let sock = null;
 let connectionState = 'disconnected';
+let latestQRString = null;
 
 async function startSocket() {
   const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
   const { version } = await fetchLatestBaileysVersion();
+
+  const PAIRING_PHONE = process.env.WHATSAPP_PAIRING_PHONE || '';
 
   sock = makeWASocket({
     version,
     auth: state,
     logger,
     printQRInTerminal: false,
-    browser: ['Hermes Agent', 'Chrome', '120.0'],
+    browser: ['Ubuntu', 'Chrome', '20.0.04'],
     syncFullHistory: false,
     markOnlineOnConnect: false,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 60000,
+    keepAliveIntervalMs: 25000,
     // Required for Baileys 7.x: without this, incoming messages that need
     // E2EE session re-establishment are silently dropped (msg.message === null)
     getMessage: async (key) => {
@@ -187,9 +193,26 @@ async function startSocket() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      console.log('\n📱 Scan this QR code with WhatsApp on your phone:\n');
-      qrcode.generate(qr, { small: true });
-      console.log('\nWaiting for scan...\n');
+      latestQRString = qr;
+      if (PAIRING_PHONE) {
+        // Use pairing code instead of QR — request it once on first QR event
+        if (!sock._pairingCodeRequested) {
+          sock._pairingCodeRequested = true;
+          sock.requestPairingCode(PAIRING_PHONE).then(code => {
+            console.log('\n🔑 WhatsApp pairing code: ' + code);
+            console.log('Enter this code in WhatsApp → Linked Devices → Link with phone number\n');
+          }).catch(e => {
+            console.log('Pairing code error:', e.message, '— falling back to QR');
+            console.log('\n📱 Scan this QR code with WhatsApp on your phone:\n');
+            qrcode.generate(qr, { small: true });
+            console.log('\nWaiting for scan...\n');
+          });
+        }
+      } else {
+        console.log('\n📱 Scan this QR code with WhatsApp on your phone:\n');
+        qrcode.generate(qr, { small: true });
+        console.log('\nWaiting for scan...\n');
+      }
     }
 
     if (connection === 'close') {
@@ -461,6 +484,14 @@ app.use((req, res, next) => {
 });
 
 // Poll for new messages (long-poll style)
+app.get('/qr-string', (req, res) => {
+  if (latestQRString) {
+    res.json({ qr: latestQRString, status: connectionState });
+  } else {
+    res.status(404).json({ error: 'no QR available', status: connectionState });
+  }
+});
+
 app.get('/messages', (req, res) => {
   const msgs = messageQueue.splice(0, messageQueue.length);
   res.json(msgs);
